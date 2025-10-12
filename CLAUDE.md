@@ -4,93 +4,164 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a client-side web application for creating short form drama videos using AI video generation (Sora2 API). The application is built with vanilla JavaScript and Vite, featuring a three-panel interface: Asset Manager (left), Video Viewer (center), and Prompt Input (bottom).
+This is a web application for creating short form drama videos using AI video generation. The application features a **Python Flask backend** that wraps OpenAI Sora-2 and Google Veo 3 APIs, and a **JavaScript frontend** built with vanilla JS and Vite. The UI has a three-panel interface: Video List (left), Video Viewer (center), and Prompt Input (bottom).
 
 ## Development Commands
 
 ### Running the Application
+
+**IMPORTANT**: You need to run BOTH the Python backend AND the frontend:
+
+#### 1. Start Python Backend (Terminal 1)
 ```bash
-npm run dev          # Start development server on port 3000 (auto-opens browser)
-npm run build        # Build for production (output: dist/)
+cd backend
+./start_backend.sh   # Starts Flask server on port 5001
+```
+
+#### 2. Start Frontend Dev Server (Terminal 2)
+```bash
+npm run dev          # Start Vite dev server on port 3000 (auto-opens browser)
+```
+
+The frontend proxies API requests from `/api/videos/*` to the Python backend at `http://localhost:5001`.
+
+### Building for Production
+```bash
+npm run build        # Build frontend (output: dist/)
 npm run preview      # Preview production build
 ```
 
 ### Testing
 ```bash
+# Frontend tests
 npm test             # Run tests with Vitest
 npm run test:ui      # Run tests with UI
 npm run test:coverage # Run tests with coverage report
+
+# Backend tests
+pytest               # Run Python tests
 ```
 
-### Python Dependencies (Backend/Workflow Tools)
+### Python Dependencies
 ```bash
-pip install -r requirements.txt  # Install Python dependencies
-pytest                          # Run Python tests
+pip install -r requirements.txt  # Install: Flask, OpenAI, Google GenAI, etc.
 ```
 
 ## Architecture Overview
 
-### Three-Panel Layout Structure
-The application uses a modular component architecture centered around three main UI panels:
+### System Architecture
 
-1. **Asset Manager (Left Panel)**: Handles drag-and-drop file uploads, stores assets in IndexedDB, and displays thumbnails in a grid
-2. **Video Viewer (Center Panel)**: Displays generated videos with HTML5 video player and playback controls
-3. **Prompt Input (Bottom Panel)**: Text input for video generation prompts, submission to Sora2 API, and status display
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Frontend (Vite + Vanilla JS)              │
+│  ┌────────────┐  ┌────────────┐  ┌────────────────────┐    │
+│  │ Video List │  │   Video    │  │  Prompt Input      │    │
+│  │  (Left)    │  │  Viewer    │  │   (Bottom)         │    │
+│  │            │  │  (Center)  │  │                    │    │
+│  └────────────┘  └────────────┘  └────────────────────┘    │
+│         │              │                    │                │
+│         └──────────────┴────────────────────┘                │
+│                        │                                     │
+│                  Sora2Client.js                              │
+│                        │                                     │
+└────────────────────────┼─────────────────────────────────────┘
+                         │ HTTP API (/api/videos/*)
+                         │ Proxied by Vite
+┌────────────────────────┼─────────────────────────────────────┐
+│                        ▼                                     │
+│            Python Backend (Flask)                            │
+│                  video_service.py                            │
+│                        │                                     │
+│         ┌──────────────┴──────────────┐                     │
+│         │                              │                     │
+│    video_generator.py           Job Management              │
+│  (from ai-short-drama)           (In-memory/Redis)          │
+│         │                              │                     │
+│    ┌────┴────┐                  ┌─────┴─────┐              │
+│    │ OpenAI  │                  │  Google   │              │
+│    │ Sora-2  │                  │  Veo 3    │              │
+│    └─────────┘                  └───────────┘              │
+└─────────────────────────────────────────────────────────────┘
+```
 
-### Core Services Layer
-- **Sora2Client**: API client for authentication, video generation requests, status polling, and video downloads
-- **StorageService**: Manages IndexedDB for persisting assets, generated videos, and prompt history
-- **AppState**: Central state management coordinating all components
+### Frontend Architecture
 
-### Data Storage (IndexedDB)
-Three main stores:
-- **Assets Store**: Uploaded images/videos (blob storage)
-- **Videos Store**: Generated videos with associated prompts and Sora job IDs
-- **Prompts Store**: Prompt history for reuse
+The application uses a modular component architecture with three main UI panels:
+
+1. **Video List (Left Panel)**: Lists all video generation jobs from the backend with status indicators
+2. **Video Viewer (Center Panel)**: Displays selected videos with HTML5 player and playback controls
+3. **Prompt Input (Bottom Panel)**: Text input for video generation prompts with provider selection
+
+### Frontend Services Layer
+- **Sora2Client**: API client that communicates with Python backend for video generation, status polling, and downloads
+- **StorageService**: Manages IndexedDB for persisting downloaded videos and prompt history (optional local caching)
+- **Components**: VideoList, VideoViewer, PromptInput, DebugPanel
+
+### Backend Architecture (Python Flask)
+
+**Location**: `/backend/video_service.py`
+
+The backend wraps video generation logic from the `ai-short-drama` project's `video_generator.py`:
+
+- **Job-based Architecture**: Each generation request creates a job with unique ID
+- **Background Processing**: Video generation runs in background thread (use Celery in production)
+- **Dual Provider Support**: OpenAI Sora-2 and Google Veo 3
+- **Video Storage**: Generated videos saved to `backend/videos/` directory
+- **RESTful API**: Simple HTTP endpoints for frontend integration
 
 ### API Integration Flow
-1. User submits prompt → Sora2Client sends POST to `/v1/generate`
-2. Receive jobId → Poll `/v1/status/{jobId}` for completion
-3. On completion → Download video from `/v1/download/{jobId}`
-4. Save video blob to IndexedDB → Display in Video Viewer → Auto-add to Assets
+
+1. User submits prompt → **Frontend** sends `POST /api/videos/generate` with prompt, provider, and settings
+2. **Backend** creates job → Initializes VideoGenerator → Starts background generation
+3. **Frontend** polls `GET /api/videos/{jobId}/status` every 3 seconds
+4. **Backend** updates job status as video generates (pending → processing → completed)
+5. On completion → **Frontend** downloads video via `GET /api/videos/{jobId}/download`
+6. **Frontend** displays video in viewer and optionally saves to IndexedDB
+
+### Provider Support
+
+**OpenAI Sora-2:**
+- Duration: 4, 8, or 12 seconds
+- Sizes: 720x1280 (vertical), 1280x720 (horizontal), etc.
+- Requires: Organization verification
+
+**Google Veo 3:**
+- Duration: Fixed 8 seconds
+- Models: `veo-3.0-generate-001` (high quality), `veo-3.0-fast-generate-001` (faster)
+- Aspect Ratios: 16:9, 9:16, 1:1
 
 ## Key Implementation Details
 
-### Component Structure (Planned)
+### Component Structure (Actual)
 ```
-src/
-├── main.js                 # Application entry point, initializes all components
-├── components/
-│   ├── AssetManager.js     # Drag-drop upload, thumbnail display, asset CRUD
-│   ├── VideoViewer.js      # Video playback, download, status display
-│   └── PromptInput.js      # Prompt submission, history, status updates
-├── services/
-│   ├── Sora2Client.js      # API authentication, generation, polling
-│   └── StorageService.js   # IndexedDB wrapper for all storage operations
-├── state/
-│   └── AppState.js         # Central state: assets[], currentVideo, generationStatus
-└── utils/
-    ├── fileHandler.js      # File validation, type checking, size limits
-    └── constants.js        # API endpoints, storage keys, config constants
-```
+backend/
+├── video_service.py        # Flask API server (port 5001)
+├── videos/                 # Generated video storage
+├── start_backend.sh        # Startup script
+└── README.md               # Backend documentation
 
-### State Management
-The AppState manages:
-```javascript
-{
-  assets: [],                                           // Array of uploaded asset objects
-  currentVideo: null,                                   // Currently playing video object
-  generationStatus: 'idle' | 'generating' | 'complete' | 'error',
-  promptHistory: [],                                    // Previous prompts
-  apiConfig: { apiKey: '', baseUrl: '' }               // Sora2 API configuration
-}
+src/
+├── main.js                 # Application entry point, wires all components
+├── components/
+│   ├── DebugPanel.js       # Debug console for API calls and logs
+│   ├── VideoList.js        # Left panel: List jobs from backend API
+│   ├── VideoViewer.js      # Center panel: Video playback with HTML5 player
+│   └── PromptInput.js      # Bottom panel: Prompt submission with status
+├── services/
+│   ├── Sora2Client.js      # API client for Python backend (no auth needed)
+│   └── StorageService.js   # IndexedDB wrapper for local video caching
+└── utils/
+    └── (placeholder for future utilities)
 ```
 
 ### Configuration
-- API keys should be stored in `config/sora2_config.json` (not committed)
-- Use environment variables for sensitive data in production
-- File validation: Only accept image/video formats, implement size limits
-- Polling interval for Sora2 status checks should be configurable (default: 5s)
+- **Backend API Keys**: Stored in `.env` file at project root or `ai-short-drama` directory
+  - `OPENAI_API_KEY` for OpenAI Sora-2
+  - `GEMINI_API_KEY` for Google Veo 3
+- **Frontend**: No API keys needed (calls backend via proxy)
+- **Polling Interval**: 3 seconds (configurable in Sora2Client.js:9)
+- **Backend Port**: 5001 (Flask server)
+- **Frontend Port**: 3000 (Vite dev server)
 
 ## Testing Strategy
 
@@ -140,10 +211,11 @@ The AppState manages:
 - Blob storage can fail silently on quota exceeded
 - Always handle promise rejections from IndexedDB operations
 
-### Sora2 API
-- Generation can take several minutes; implement proper timeout handling
-- Rate limits may apply; add exponential backoff for polling
-- CORS issues may require proxy setup if API doesn't support direct browser calls
+### Video Generation API
+- Generation can take 1-6 minutes; backend handles long-running operations
+- Frontend polls status every 3 seconds to check completion
+- Python backend manages all API communication (no CORS issues from browser)
+- Backend uses threading for background processing (consider Celery for production scale)
 
 ### Video Playback
 - Large video files may cause memory issues; consider streaming or chunked loading

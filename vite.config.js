@@ -9,6 +9,17 @@ export default defineConfig({
   server: {
     port: 3000,
     open: true,
+    proxy: {
+      '/api/videos': {
+        target: 'http://localhost:5001',
+        changeOrigin: true,
+        configure: (proxy, options) => {
+          proxy.on('proxyReq', (proxyReq, req, res) => {
+            console.log('Proxying request to Python backend:', proxyReq.path);
+          });
+        }
+      }
+    }
   },
   test: {
     globals: true,
