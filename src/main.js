@@ -9,6 +9,7 @@ import { PromptInput } from './components/PromptInput.js';
 import { VideoViewer } from './components/VideoViewer.js';
 import { VideoList } from './components/VideoList.js';
 import { debugPanel } from './components/DebugPanel.js';
+import { WorkflowBuilder } from './components/workflow/WorkflowBuilder.js';
 
 // Global instances
 let soraClient;
@@ -16,6 +17,7 @@ let storageService;
 let promptInput;
 let videoViewer;
 let videoList;
+let workflowBuilder;
 
 /**
  * Initialize the application
@@ -49,6 +51,13 @@ async function initializeApp() {
     // Load video list on startup
     await loadVideoList();
 
+    // Initialize workflow builder
+    workflowBuilder = new WorkflowBuilder('workflow-builder-container', soraClient, videoViewer);
+    workflowBuilder.initialize();
+
+    // Setup tab switching
+    setupTabSwitching();
+
     console.log('Application initialized successfully!');
     debugPanel.logSuccess('Application initialized successfully!');
   } catch (error) {
@@ -56,6 +65,34 @@ async function initializeApp() {
     debugPanel.logError('Application initialization failed', error);
     alert(`Initialization failed: ${error.message}`);
   }
+}
+
+/**
+ * Setup tab switching between viewer and workflow builder
+ */
+function setupTabSwitching() {
+  const tabButtons = document.querySelectorAll('.tab-btn');
+  const viewerView = document.getElementById('viewer-view');
+  const workflowView = document.getElementById('workflow-view');
+
+  tabButtons.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const tab = btn.dataset.tab;
+
+      // Update button states
+      tabButtons.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+
+      // Switch views
+      if (tab === 'viewer') {
+        viewerView.classList.add('active');
+        workflowView.classList.remove('active');
+      } else if (tab === 'workflow') {
+        viewerView.classList.remove('active');
+        workflowView.classList.add('active');
+      }
+    });
+  });
 }
 
 /**

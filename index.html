@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Short Form Drama Workflow</title>
     <link rel="stylesheet" href="/styles/main.css">
+    <link rel="stylesheet" href="/styles/workflow.css">
 </head>
 <body>
     <div id="app">
@@ -12,7 +13,8 @@
             <h1>Short Form Drama Workflow</h1>
         </header>
 
-        <main class="main-container">
+        <!-- Video Viewer View -->
+        <main class="main-container view-container active" id="viewer-view">
             <!-- Left Panel: Video List -->
             <aside class="panel panel-left" id="video-list-panel">
                 <div id="video-list-container"></div>
@@ -34,24 +36,12 @@
                     <button id="download-btn" class="btn" disabled>Download Video</button>
                 </div>
             </section>
-
-            <!-- Bottom Panel: Prompt Input -->
-            <section class="panel panel-bottom" id="prompt-panel">
-                <h2>Generate Video</h2>
-                <div class="prompt-container">
-                    <textarea
-                        id="prompt-input"
-                        class="prompt-input"
-                        placeholder="Enter your video generation prompt..."
-                        rows="4"
-                    ></textarea>
-                    <div class="prompt-actions">
-                        <button id="generate-btn" class="btn btn-primary">Generate Video</button>
-                        <span id="prompt-status" class="prompt-status"></span>
-                    </div>
-                </div>
-            </section>
         </main>
+
+        <!-- Workflow Builder View -->
+        <div class="view-container" id="workflow-view">
+            <div id="workflow-builder-container"></div>
+        </div>
     </div>
 
     <script type="module" src="/src/main.js"></script>

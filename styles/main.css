@@ -36,6 +36,9 @@ header {
     padding: 1rem 2rem;
     border-bottom: 1px solid var(--border-color);
     box-shadow: var(--shadow);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
 }
 
 header h1 {
@@ -43,12 +46,57 @@ header h1 {
     font-weight: 600;
 }
 
+.header-tabs {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.tab-btn {
+    padding: 0.5rem 1rem;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    background-color: white;
+    color: var(--text-color);
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.tab-btn:hover {
+    background-color: var(--bg-color);
+}
+
+.tab-btn.active {
+    background-color: var(--primary-color);
+    color: white;
+    border-color: var(--primary-color);
+}
+
+.view-container {
+    flex: 1;
+    display: none;
+}
+
+.view-container.active {
+    display: flex;
+}
+
+#workflow-view {
+    flex-direction: column;
+    height: calc(100vh - 60px);
+}
+
+#workflow-builder-container {
+    flex: 1;
+}
+
 /* Main Container - Grid Layout */
 .main-container {
     flex: 1;
     display: grid;
     grid-template-columns: 300px 1fr;
-    grid-template-rows: 1fr 250px;
+    grid-template-rows: 1fr;
     gap: 1rem;
     padding: 1rem;
     overflow: hidden;
