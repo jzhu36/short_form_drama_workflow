@@ -8,10 +8,10 @@ import { ComponentPalette } from './ComponentPalette.js';
 import { WorkflowEngine } from './WorkflowEngine.js';
 
 export class WorkflowBuilder {
-  constructor(containerId, soraClient, videoViewer) {
+  constructor(containerId, soraClient, assetManager = null) {
     this.containerId = containerId;
     this.soraClient = soraClient;
-    this.videoViewer = videoViewer;
+    this.assetManager = assetManager;
     this.container = null;
 
     this.canvas = null;
@@ -139,13 +139,21 @@ export class WorkflowBuilder {
 
       this.updateStatus('success', 'Workflow completed successfully!');
 
-      // Display video result if available
+      // Display video result if available and add to asset manager
       const videoOutputs = Array.from(this.engine.executionResults.values())
         .find(output => output.video);
 
-      if (videoOutputs && videoOutputs.video && this.videoViewer) {
-        this.videoViewer.loadVideo(videoOutputs.video, videoOutputs.metadata || {});
-        this.updateStatus('success', 'Video loaded in viewer!');
+      if (videoOutputs && videoOutputs.video && this.assetManager) {
+        // Add to asset manager
+        await this.assetManager.addGeneratedAsset(videoOutputs.video, {
+          prompt: videoOutputs.metadata?.prompt || '',
+          provider: videoOutputs.metadata?.provider || 'Unknown',
+          model: videoOutputs.metadata?.model || '',
+          resolution: videoOutputs.metadata?.resolution || videoOutputs.metadata?.size || '',
+          duration: videoOutputs.metadata?.duration || '',
+          generatedAt: new Date().toISOString()
+        });
+        this.updateStatus('success', 'Video added to Asset Manager!');
       }
 
       // Show results summary

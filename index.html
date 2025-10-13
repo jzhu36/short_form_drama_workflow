@@ -6,6 +6,7 @@
     <title>Short Form Drama Workflow</title>
     <link rel="stylesheet" href="/styles/main.css">
     <link rel="stylesheet" href="/styles/workflow.css">
+    <link rel="stylesheet" href="/styles/asset-manager.css">
 </head>
 <body>
     <div id="app">
@@ -13,34 +14,15 @@
             <h1>Short Form Drama Workflow</h1>
         </header>
 
-        <!-- Video Viewer View -->
-        <main class="main-container view-container active" id="viewer-view">
-            <!-- Left Panel: Video List -->
-            <aside class="panel panel-left" id="video-list-panel">
-                <div id="video-list-container"></div>
-            </aside>
+        <!-- Workflow Builder View (Main View) -->
+        <div class="view-container active" id="workflow-view">
+            <!-- Asset Manager Sidebar -->
+            <aside class="asset-manager-sidebar" id="asset-manager-container"></aside>
 
-            <!-- Center Panel: Video Viewer -->
-            <section class="panel panel-center" id="video-panel">
-                <h2>Video Viewer</h2>
-                <div id="video-container" class="video-container">
-                    <div id="video-status" class="video-status">
-                        <p>No video loaded</p>
-                    </div>
-                    <video id="video-player" class="video-player" controls style="display: none;">
-                        <source src="" type="video/mp4">
-                        Your browser does not support the video tag.
-                    </video>
-                </div>
-                <div class="video-controls">
-                    <button id="download-btn" class="btn" disabled>Download Video</button>
-                </div>
-            </section>
-        </main>
-
-        <!-- Workflow Builder View -->
-        <div class="view-container" id="workflow-view">
-            <div id="workflow-builder-container"></div>
+            <!-- Workflow Builder -->
+            <div class="workflow-main-content">
+                <div id="workflow-builder-container"></div>
+            </div>
         </div>
     </div>
 
