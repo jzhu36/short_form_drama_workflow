@@ -139,26 +139,31 @@ export class WorkflowBuilder {
 
       this.updateStatus('success', 'Workflow completed successfully!');
 
-      // Display video result if available and add to asset manager
-      const videoOutputs = Array.from(this.engine.executionResults.values())
-        .find(output => output.video);
+      // Add ALL video results to asset manager
+      if (this.assetManager) {
+        const allVideoOutputs = Array.from(this.engine.executionResults.values())
+          .filter(output => output.video);
 
-      if (videoOutputs && videoOutputs.video && this.assetManager) {
-        // Add to asset manager
-        await this.assetManager.addGeneratedAsset(videoOutputs.video, {
-          prompt: videoOutputs.metadata?.prompt || '',
-          provider: videoOutputs.metadata?.provider || 'Unknown',
-          model: videoOutputs.metadata?.model || '',
-          resolution: videoOutputs.metadata?.resolution || videoOutputs.metadata?.size || '',
-          duration: videoOutputs.metadata?.duration || '',
-          generatedAt: new Date().toISOString()
-        });
-        this.updateStatus('success', 'Video added to Asset Manager!');
+        if (allVideoOutputs.length > 0) {
+          for (const videoOutput of allVideoOutputs) {
+            await this.assetManager.addGeneratedAsset(videoOutput.video, {
+              prompt: videoOutput.metadata?.prompt || '',
+              provider: videoOutput.metadata?.provider || 'Unknown',
+              model: videoOutput.metadata?.model || '',
+              resolution: videoOutput.metadata?.resolution || videoOutput.metadata?.size || '',
+              duration: videoOutput.metadata?.duration || '',
+              generatedAt: new Date().toISOString()
+            });
+          }
+          this.updateStatus('success', `${allVideoOutputs.length} video(s) added to Asset Manager!`);
+        }
       }
 
       // Show results summary
       setTimeout(() => {
-        alert(`Workflow completed!\n\nGenerated ${this.engine.executionResults.size} outputs.`);
+        const videoCount = Array.from(this.engine.executionResults.values())
+          .filter(output => output.video).length;
+        alert(`Workflow completed!\n\nGenerated ${videoCount} video(s).`);
       }, 500);
 
     } catch (error) {

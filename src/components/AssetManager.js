@@ -3,6 +3,8 @@
  * Manages uploaded and generated assets (images and videos)
  */
 
+import { indexedDBService } from '../services/IndexedDBService.js';
+
 export class AssetManager {
   constructor(containerId) {
     this.containerId = containerId;
@@ -10,20 +12,24 @@ export class AssetManager {
     this.uploadedAssets = [];
     this.generatedAssets = [];
     this.onAssetSelect = null;
+    this.dbService = indexedDBService;
   }
 
   /**
    * Initialize the component
    */
-  initialize() {
+  async initialize() {
     this.container = document.getElementById(this.containerId);
     if (!this.container) {
       throw new Error(`Container #${this.containerId} not found`);
     }
 
+    // Initialize IndexedDB
+    await this.dbService.initialize();
+
     this.render();
     this.attachEventListeners();
-    this.loadAssetsFromStorage();
+    await this.loadAssetsFromStorage();
   }
 
   /**
@@ -322,6 +328,8 @@ export class AssetManager {
   async deleteAsset(id, category) {
     if (!confirm('Delete this asset?')) return;
 
+    const storeName = category === 'uploaded' ? 'uploadedAssets' : 'generatedAssets';
+
     if (category === 'uploaded') {
       this.uploadedAssets = this.uploadedAssets.filter(a => a.id !== id);
       this.renderUploadedAssets();
@@ -330,7 +338,8 @@ export class AssetManager {
       this.renderGeneratedAssets();
     }
 
-    await this.saveToStorage();
+    // Delete from IndexedDB
+    await this.dbService.deleteAsset(storeName, id);
   }
 
   /**
@@ -361,53 +370,40 @@ export class AssetManager {
   }
 
   /**
-   * Save assets to localStorage
+   * Save assets to IndexedDB
    */
   async saveToStorage() {
     try {
-      // Store metadata only (blobs can't be stored in localStorage)
-      const uploadedMeta = this.uploadedAssets.map(a => ({
-        id: a.id,
-        name: a.name,
-        type: a.type,
-        size: a.size,
-        uploadedAt: a.uploadedAt
-      }));
+      // Save uploaded assets to IndexedDB
+      for (const asset of this.uploadedAssets) {
+        await this.dbService.saveAsset('uploadedAssets', asset);
+      }
 
-      const generatedMeta = this.generatedAssets.map(a => ({
-        id: a.id,
-        name: a.name,
-        type: a.type,
-        generatedAt: a.generatedAt,
-        prompt: a.prompt,
-        provider: a.provider,
-        model: a.model,
-        resolution: a.resolution,
-        duration: a.duration
-      }));
-
-      localStorage.setItem('uploadedAssetsMeta', JSON.stringify(uploadedMeta));
-      localStorage.setItem('generatedAssetsMeta', JSON.stringify(generatedMeta));
+      // Save generated assets to IndexedDB
+      for (const asset of this.generatedAssets) {
+        await this.dbService.saveAsset('generatedAssets', asset);
+      }
     } catch (error) {
-      console.error('Failed to save assets to storage:', error);
+      console.error('Failed to save assets to IndexedDB:', error);
     }
   }
 
   /**
-   * Load assets from localStorage
+   * Load assets from IndexedDB
    */
   async loadAssetsFromStorage() {
     try {
-      const uploadedMeta = JSON.parse(localStorage.getItem('uploadedAssetsMeta') || '[]');
-      const generatedMeta = JSON.parse(localStorage.getItem('generatedAssetsMeta') || '[]');
+      // Load uploaded assets from IndexedDB
+      this.uploadedAssets = await this.dbService.getAllAssets('uploadedAssets');
 
-      // Note: We can't restore the actual blobs from localStorage
-      // In a production app, you'd use IndexedDB or fetch from a server
+      // Load generated assets from IndexedDB
+      this.generatedAssets = await this.dbService.getAllAssets('generatedAssets');
 
+      // Render both
       this.renderUploadedAssets();
       this.renderGeneratedAssets();
     } catch (error) {
-      console.error('Failed to load assets from storage:', error);
+      console.error('Failed to load assets from IndexedDB:', error);
     }
   }
 
@@ -439,12 +435,16 @@ export class AssetManager {
   /**
    * Clear all assets
    */
-  clearAll() {
+  async clearAll() {
     if (!confirm('Clear all assets? This cannot be undone.')) return;
 
     this.uploadedAssets = [];
     this.generatedAssets = [];
-    this.saveToStorage();
+
+    // Clear from IndexedDB
+    await this.dbService.clearStore('uploadedAssets');
+    await this.dbService.clearStore('generatedAssets');
+
     this.renderUploadedAssets();
     this.renderGeneratedAssets();
   }
