@@ -38,6 +38,13 @@ export class ComponentPalette {
         color: '#2563eb'
       },
       {
+        type: 'Sora2ImageToVideo',
+        name: 'Sora2 Image-to-Video',
+        icon: '📸',
+        description: 'Generate video with character reference image',
+        color: '#7c3aed'
+      },
+      {
         type: 'VideoStitcher',
         name: 'Video Stitcher',
         icon: '🎞️',

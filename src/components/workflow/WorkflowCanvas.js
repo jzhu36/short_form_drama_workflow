@@ -5,6 +5,7 @@
 
 import { TextInputNode } from './nodes/TextInputNode.js';
 import { Sora2VideoNode } from './nodes/Sora2VideoNode.js';
+import { Sora2ImageToVideoNode } from './nodes/Sora2ImageToVideoNode.js';
 import { PromptGeneratorNode } from './nodes/PromptGeneratorNode.js';
 import { VideoStitcherNode } from './nodes/VideoStitcherNode.js';
 import { VideoNode } from './nodes/VideoNode.js';
@@ -26,10 +27,17 @@ export class WorkflowCanvas {
     this.connectingFrom = null;
     this.tempConnection = null;
 
+    // Canvas transform state
+    this.zoom = 1.0;
+    this.panOffset = { x: 0, y: 0 };
+    this.isPanning = false;
+    this.panStart = { x: 0, y: 0 };
+
     this.nodeRegistry = {
       'TextInput': TextInputNode,
       'Video': VideoNode,
       'Sora2Video': Sora2VideoNode,
+      'Sora2ImageToVideo': Sora2ImageToVideoNode,
       'PromptGenerator': PromptGeneratorNode,
       'VideoStitcher': VideoStitcherNode
     };
@@ -55,15 +63,13 @@ export class WorkflowCanvas {
     this.container.innerHTML = `
       <div class="workflow-canvas-wrapper">
         <div class="workflow-canvas" id="workflow-canvas">
-          <svg class="workflow-canvas-svg" id="workflow-svg">
-            <defs>
-              <marker id="arrowhead" markerWidth="10" markerHeight="10"
-                      refX="9" refY="3" orient="auto">
-                <polygon points="0 0, 10 3, 0 6" fill="#6b7280" />
-              </marker>
-            </defs>
-          </svg>
+          <svg class="workflow-canvas-svg" id="workflow-svg"></svg>
           <div class="workflow-canvas-nodes" id="workflow-nodes"></div>
+        </div>
+        <div class="workflow-canvas-controls">
+          <button class="canvas-control-btn" id="zoom-in" title="Zoom In">+</button>
+          <button class="canvas-control-btn" id="zoom-reset" title="Reset Zoom">100%</button>
+          <button class="canvas-control-btn" id="zoom-out" title="Zoom Out">−</button>
         </div>
       </div>
     `;
@@ -71,6 +77,16 @@ export class WorkflowCanvas {
     this.canvas = this.container.querySelector('#workflow-canvas');
     this.svgLayer = this.container.querySelector('#workflow-svg');
     this.nodesLayer = this.container.querySelector('#workflow-nodes');
+
+    // Initialize zoom controls
+    this.zoomInBtn = this.container.querySelector('#zoom-in');
+    this.zoomOutBtn = this.container.querySelector('#zoom-out');
+    this.zoomResetBtn = this.container.querySelector('#zoom-reset');
+
+    // Attach zoom control listeners
+    this.zoomInBtn.addEventListener('click', () => this.zoomIn());
+    this.zoomOutBtn.addEventListener('click', () => this.zoomOut());
+    this.zoomResetBtn.addEventListener('click', () => this.resetZoom());
   }
 
   /**
@@ -81,6 +97,26 @@ export class WorkflowCanvas {
     this.canvas.addEventListener('click', (e) => {
       if (e.target === this.canvas || e.target === this.nodesLayer) {
         this.deselectAll();
+      }
+    });
+
+    // Mouse wheel for zoom
+    this.canvas.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const delta = e.deltaY > 0 ? -0.05 : 0.05;
+      this.setZoom(this.zoom + delta, e.clientX, e.clientY);
+    }, { passive: false });
+
+    // Mouse down for panning
+    this.canvas.addEventListener('mousedown', (e) => {
+      // Pan with: middle mouse, shift+click, or left-click on empty canvas
+      const isEmptyCanvas = e.target === this.canvas || e.target === this.nodesLayer || e.target === this.svgLayer;
+
+      if (e.button === 1 || (e.button === 0 && e.shiftKey) || (e.button === 0 && isEmptyCanvas)) {
+        e.preventDefault();
+        this.isPanning = true;
+        this.panStart = { x: e.clientX - this.panOffset.x, y: e.clientY - this.panOffset.y };
+        this.canvas.style.cursor = 'grabbing';
       }
     });
 
@@ -251,14 +287,24 @@ export class WorkflowCanvas {
   }
 
   /**
-   * Handle mouse move - update dragging or connecting
+   * Handle mouse move - update dragging, connecting, or panning
    */
   handleMouseMove(event) {
+    // Handle canvas panning
+    if (this.isPanning) {
+      this.panOffset = {
+        x: event.clientX - this.panStart.x,
+        y: event.clientY - this.panStart.y
+      };
+      this.updateCanvasTransform();
+      return;
+    }
+
     // Handle node dragging
     if (this.draggingNode) {
       const canvasRect = this.canvas.getBoundingClientRect();
-      const x = event.clientX - canvasRect.left - this.dragOffset.x;
-      const y = event.clientY - canvasRect.top - this.dragOffset.y;
+      const x = (event.clientX - canvasRect.left - this.panOffset.x) / this.zoom - this.dragOffset.x;
+      const y = (event.clientY - canvasRect.top - this.panOffset.y) / this.zoom - this.dragOffset.y;
 
       this.draggingNode.setPosition(x, y);
       this.redrawConnections();
@@ -269,10 +315,10 @@ export class WorkflowCanvas {
       const fromRect = this.connectingFrom.portElement.getBoundingClientRect();
       const canvasRect = this.canvas.getBoundingClientRect();
 
-      const startX = fromRect.right - canvasRect.left;
-      const startY = fromRect.top + fromRect.height / 2 - canvasRect.top;
-      const endX = event.clientX - canvasRect.left;
-      const endY = event.clientY - canvasRect.top;
+      const startX = (fromRect.right - canvasRect.left - this.panOffset.x) / this.zoom;
+      const startY = (fromRect.top + fromRect.height / 2 - canvasRect.top - this.panOffset.y) / this.zoom;
+      const endX = (event.clientX - canvasRect.left - this.panOffset.x) / this.zoom;
+      const endY = (event.clientY - canvasRect.top - this.panOffset.y) / this.zoom;
 
       const path = this.createConnectionPath(startX, startY, endX, endY);
       this.tempConnection.setAttribute('d', path);
@@ -280,9 +326,15 @@ export class WorkflowCanvas {
   }
 
   /**
-   * Handle mouse up - end dragging or complete connection
+   * Handle mouse up - end dragging, panning, or complete connection
    */
   handleMouseUp(event) {
+    // End canvas panning
+    if (this.isPanning) {
+      this.isPanning = false;
+      this.canvas.style.cursor = '';
+    }
+
     // End node dragging
     if (this.draggingNode) {
       this.draggingNode = null;
@@ -384,21 +436,29 @@ export class WorkflowCanvas {
 
       if (!fromPort || !toPort) return;
 
-      const canvasRect = this.canvas.getBoundingClientRect();
-      const fromRect = fromPort.getBoundingClientRect();
-      const toRect = toPort.getBoundingClientRect();
+      // Get port positions relative to their nodes
+      const fromPortIndex = parseInt(fromPort.dataset.portIndex);
+      const toPortIndex = parseInt(toPort.dataset.portIndex);
 
-      const startX = fromRect.right - canvasRect.left;
-      const startY = fromRect.top + fromRect.height / 2 - canvasRect.top;
-      const endX = toRect.left - canvasRect.left;
-      const endY = toRect.top + toRect.height / 2 - canvasRect.top;
+      // Calculate port positions: node position + port offset
+      // Ports are at the bottom corners, vertically stacked
+      const nodeWidth = 280;
+      const nodeMaxHeight = 600; // Max height of node
+      const portHeight = 32; // Height per port (includes gap)
+
+      // Output ports are on the bottom-right corner, stacked vertically
+      const startX = fromNode.position.x + nodeWidth;
+      const startY = fromNode.position.y + nodeMaxHeight - (fromPortIndex * portHeight) - 16;
+
+      // Input ports are on the bottom-left corner, stacked vertically
+      const endX = toNode.position.x;
+      const endY = toNode.position.y + nodeMaxHeight - (toPortIndex * portHeight) - 16;
 
       const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
       path.setAttribute('class', 'workflow-connection');
-      path.setAttribute('stroke', '#6b7280');
-      path.setAttribute('stroke-width', '2');
+      path.setAttribute('stroke', '#10b981');
+      path.setAttribute('stroke-width', '3');
       path.setAttribute('fill', 'none');
-      path.setAttribute('marker-end', 'url(#arrowhead)');
       path.setAttribute('d', this.createConnectionPath(startX, startY, endX, endY));
       path.dataset.connectionId = conn.id;
 
@@ -577,6 +637,70 @@ export class WorkflowCanvas {
       return true;
     });
 
+    this.redrawConnections();
+  }
+
+  /**
+   * Zoom in
+   */
+  zoomIn() {
+    this.setZoom(this.zoom + 0.1);
+  }
+
+  /**
+   * Zoom out
+   */
+  zoomOut() {
+    this.setZoom(this.zoom - 0.1);
+  }
+
+  /**
+   * Reset zoom to 100%
+   */
+  resetZoom() {
+    this.zoom = 1.0;
+    this.panOffset = { x: 0, y: 0 };
+    this.updateCanvasTransform();
+    this.zoomResetBtn.textContent = '100%';
+  }
+
+  /**
+   * Set zoom level
+   */
+  setZoom(newZoom, centerX, centerY) {
+    // Clamp zoom between 0.1 and 3.0
+    newZoom = Math.max(0.1, Math.min(3.0, newZoom));
+
+    // If centering around a point (for mouse wheel zoom)
+    if (centerX !== undefined && centerY !== undefined) {
+      const canvasRect = this.canvas.getBoundingClientRect();
+      const mouseX = centerX - canvasRect.left;
+      const mouseY = centerY - canvasRect.top;
+
+      // Adjust pan offset to zoom around mouse position
+      const oldZoom = this.zoom;
+      const zoomRatio = newZoom / oldZoom;
+
+      this.panOffset.x = mouseX - (mouseX - this.panOffset.x) * zoomRatio;
+      this.panOffset.y = mouseY - (mouseY - this.panOffset.y) * zoomRatio;
+    }
+
+    this.zoom = newZoom;
+    this.updateCanvasTransform();
+
+    // Update zoom display
+    this.zoomResetBtn.textContent = `${Math.round(this.zoom * 100)}%`;
+  }
+
+  /**
+   * Update canvas transform (zoom and pan)
+   */
+  updateCanvasTransform() {
+    const transform = `translate(${this.panOffset.x}px, ${this.panOffset.y}px) scale(${this.zoom})`;
+    this.nodesLayer.style.transform = transform;
+    this.svgLayer.style.transform = transform;
+    this.svgLayer.style.transformOrigin = '0 0';
+    this.nodesLayer.style.transformOrigin = '0 0';
     this.redrawConnections();
   }
 }

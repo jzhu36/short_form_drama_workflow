@@ -148,7 +148,54 @@
     linear-gradient(#e5e7eb 1px, transparent 1px),
     linear-gradient(90deg, #e5e7eb 1px, transparent 1px);
   background-size: 20px 20px;
-  overflow: auto;
+  overflow: hidden;
+  cursor: default;
+}
+
+/* Zoom Controls */
+.workflow-canvas-controls {
+  position: absolute;
+  bottom: 20px;
+  right: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 1000;
+}
+
+.canvas-control-btn {
+  width: 44px;
+  height: 44px;
+  background-color: white;
+  border: 2px solid var(--border-color);
+  border-radius: 8px;
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--text-color);
+  cursor: pointer;
+  transition: all 0.2s;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.canvas-control-btn:hover {
+  background-color: var(--primary-color);
+  color: white;
+  border-color: var(--primary-color);
+  transform: scale(1.05);
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
+}
+
+.canvas-control-btn:active {
+  transform: scale(0.95);
+}
+
+#zoom-reset {
+  font-size: 0.75rem;
+  font-weight: 500;
 }
 
 .workflow-canvas-svg {
@@ -176,13 +223,23 @@
 /* Workflow Node */
 .workflow-node {
   position: absolute;
-  min-width: 200px;
+  width: 280px;
+  max-height: 600px;
   background-color: white;
   border: 2px solid var(--border-color);
   border-radius: 8px;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
   cursor: move;
   transition: box-shadow 0.2s, border-color 0.2s;
+  display: flex;
+  flex-direction: column;
+}
+
+.workflow-node-body {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-bottom: 60px; /* Space for ports at bottom */
 }
 
 .workflow-node:hover {
@@ -282,11 +339,12 @@
   margin-top: 0.5rem;
   border-radius: 4px;
   overflow: hidden;
+  max-height: 200px;
 }
 
 .video-preview {
   width: 100%;
-  max-height: 150px;
+  max-height: 180px;
   object-fit: contain;
   background-color: #000;
   border-radius: 4px;
@@ -352,56 +410,86 @@
 /* Node Ports */
 .workflow-node-inputs,
 .workflow-node-outputs {
+  position: absolute;
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: 0.75rem;
+  z-index: 20;
+  padding: 0.75rem 0.5rem;
+}
+
+.workflow-node-inputs {
+  left: 0;
+  bottom: 0;
+  align-items: flex-start;
+}
+
+.workflow-node-outputs {
+  right: 0;
+  bottom: 0;
+  align-items: flex-end;
 }
 
 .workflow-node-port {
   display: flex;
+  flex-direction: row;
   align-items: center;
   gap: 0.5rem;
   position: relative;
 }
 
 .workflow-node-input {
-  justify-content: flex-start;
+  flex-direction: row;
 }
 
 .workflow-node-output {
-  justify-content: flex-end;
+  flex-direction: row-reverse;
 }
 
 .workflow-node-port-dot {
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background-color: #6b7280;
-  border: 2px solid white;
+  width: 0;
+  height: 0;
+  border-style: solid;
   cursor: pointer;
   transition: all 0.2s;
   position: relative;
   z-index: 10;
   flex-shrink: 0;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2));
+}
+
+/* Input port - triangle pointing left (receiving from left) */
+.workflow-node-input .workflow-node-port-dot {
+  border-width: 6px 10px 6px 0;
+  border-color: transparent #6b7280 transparent transparent;
+}
+
+/* Output port - triangle pointing right (sending to right) */
+.workflow-node-output .workflow-node-port-dot {
+  border-width: 6px 0 6px 10px;
+  border-color: transparent transparent transparent #6b7280;
 }
 
 .workflow-node-port:hover .workflow-node-port-dot {
-  background-color: var(--primary-color);
-  transform: scale(1.5);
-  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.2),
-              0 2px 8px rgba(37, 99, 235, 0.4);
+  transform: scale(1.3);
+  filter: drop-shadow(0 0 6px rgba(37, 99, 235, 0.6));
   animation: pulse-port 1.5s ease-in-out infinite;
+}
+
+.workflow-node-input:hover .workflow-node-port-dot {
+  border-right-color: var(--primary-color);
+}
+
+.workflow-node-output:hover .workflow-node-port-dot {
+  border-left-color: var(--primary-color);
 }
 
 @keyframes pulse-port {
   0%, 100% {
-    box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.2),
-                0 2px 8px rgba(37, 99, 235, 0.4);
+    filter: drop-shadow(0 0 6px rgba(37, 99, 235, 0.6));
   }
   50% {
-    box-shadow: 0 0 0 8px rgba(37, 99, 235, 0.1),
-                0 2px 12px rgba(37, 99, 235, 0.6);
+    filter: drop-shadow(0 0 10px rgba(37, 99, 235, 0.8));
   }
 }
 

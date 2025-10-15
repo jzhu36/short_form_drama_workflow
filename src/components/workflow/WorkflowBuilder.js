@@ -202,7 +202,7 @@ export class WorkflowBuilder {
   }
 
   /**
-   * Save workflow to localStorage
+   * Save workflow to backend
    */
   async saveWorkflow() {
     try {
@@ -211,40 +211,71 @@ export class WorkflowBuilder {
 
       if (!workflowName) return;
 
-      // Get execution outputs
-      const outputs = {};
+      this.updateStatus('info', 'Saving workflow...');
+
+      // Prepare workflow data
+      const workflowPayload = {
+        name: workflowName,
+        description: '',
+        status: 'saved',
+        definition: workflowData
+      };
+
+      // Save to backend
+      const response = await fetch('http://localhost:5001/api/workflows', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(workflowPayload)
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to save workflow: ${response.statusText}`);
+      }
+
+      const result = await response.json();
+      const workflowId = result.workflow_id;
+
+      // Associate videos with workflow nodes
       if (this.engine && this.engine.executionResults) {
         for (const [nodeId, result] of this.engine.executionResults.entries()) {
-          // Convert video blobs to base64 for storage (only if small enough)
-          if (result.video && result.video.size < 50 * 1024 * 1024) { // Limit to 50MB
-            outputs[nodeId] = {
-              metadata: result.metadata || {},
-              hasVideo: true
-            };
+          if (result.video && result.metadata?.job_id) {
+            const node = this.canvas.nodes.find(n => n.id === nodeId);
+            if (node) {
+              try {
+                await fetch(`http://localhost:5001/api/workflows/${workflowId}/videos`, {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json'
+                  },
+                  body: JSON.stringify({
+                    video_id: result.metadata.job_id,
+                    node_id: nodeId,
+                    node_type: node.type,
+                    role: 'output'
+                  })
+                });
+              } catch (err) {
+                console.warn(`Failed to associate video for node ${nodeId}:`, err);
+              }
+            }
           }
         }
       }
 
-      // Get assets data (just references, actual blobs are in IndexedDB)
-      let assetsData = null;
-      if (this.assetManager) {
-        assetsData = {
-          uploadedCount: this.assetManager.uploadedAssets.length,
-          generatedCount: this.assetManager.generatedAssets.length
-        };
-      }
+      this.updateStatus('success', `Workflow "${workflowName}" saved!`);
 
+      // Also save to localStorage as backup
       const savedWorkflows = JSON.parse(localStorage.getItem('workflows') || '{}');
       savedWorkflows[workflowName] = {
         ...workflowData,
         name: workflowName,
-        savedAt: new Date().toISOString(),
-        outputs: outputs,
-        assets: assetsData
+        workflowId: workflowId,
+        savedAt: new Date().toISOString()
       };
-
       localStorage.setItem('workflows', JSON.stringify(savedWorkflows));
-      this.updateStatus('success', `Workflow "${workflowName}" saved!`);
+
     } catch (error) {
       alert(`Failed to save workflow: ${error.message}`);
       this.updateStatus('error', 'Failed to save workflow');
@@ -252,68 +283,125 @@ export class WorkflowBuilder {
   }
 
   /**
-   * Load workflow from localStorage
+   * Load workflow from backend
    */
-  loadWorkflow() {
+  async loadWorkflow() {
     try {
-      const savedWorkflows = JSON.parse(localStorage.getItem('workflows') || '{}');
-      const workflowNames = Object.keys(savedWorkflows);
+      this.updateStatus('info', 'Loading workflows...');
 
-      if (workflowNames.length === 0) {
+      // Fetch workflows from backend
+      const response = await fetch('http://localhost:5001/api/workflows?status=saved');
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch workflows: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      const workflows = data.workflows;
+
+      if (workflows.length === 0) {
         alert('No saved workflows found.');
+        this.updateStatus('info', 'No workflows found');
         return;
       }
 
       // Build a detailed list with info
-      const workflowList = workflowNames.map(name => {
-        const wf = savedWorkflows[name];
-        const nodeCount = wf.nodes?.length || 0;
-        const date = wf.savedAt ? new Date(wf.savedAt).toLocaleDateString() : 'Unknown';
-        const outputCount = wf.outputs ? Object.keys(wf.outputs).length : 0;
-        const assetInfo = wf.assets ? ` | Assets: ${wf.assets.uploadedCount}↑/${wf.assets.generatedCount}🎬` : '';
-        return `${name} (${nodeCount} nodes, ${outputCount} outputs${assetInfo}, saved: ${date})`;
+      const workflowList = workflows.map(wf => {
+        const nodeCount = wf.definition?.nodes?.length || 0;
+        const date = wf.updated_at ? new Date(wf.updated_at).toLocaleDateString() : 'Unknown';
+        const videoCount = wf.videos?.length || 0;
+        return `${wf.name} (${nodeCount} nodes, ${videoCount} videos, saved: ${date})`;
       }).join('\n');
 
       const workflowName = prompt(
         `Select workflow to load:\n\n${workflowList}\n\nEnter name:`
       );
 
-      if (!workflowName || !savedWorkflows[workflowName]) {
+      if (!workflowName) {
+        this.updateStatus('info', 'Load cancelled');
         return;
       }
 
-      const workflow = savedWorkflows[workflowName];
+      // Find the selected workflow
+      const selectedWorkflow = workflows.find(wf => wf.name === workflowName);
+      if (!selectedWorkflow) {
+        alert('Workflow not found');
+        return;
+      }
+
+      this.updateStatus('info', `Loading workflow "${workflowName}"...`);
+
+      // Fetch full workflow details including videos
+      const detailResponse = await fetch(`http://localhost:5001/api/workflows/${selectedWorkflow.id}`);
+
+      if (!detailResponse.ok) {
+        throw new Error(`Failed to fetch workflow details: ${detailResponse.statusText}`);
+      }
+
+      const detailData = await detailResponse.json();
+      const workflow = detailData.workflow;
 
       // Load the workflow graph
-      this.canvas.fromJSON(workflow);
+      this.canvas.fromJSON(workflow.definition);
 
-      // Restore execution outputs if available
-      if (workflow.outputs && Object.keys(workflow.outputs).length > 0) {
+      // Restore associated videos if available
+      if (workflow.videos && workflow.videos.length > 0) {
+        this.updateStatus('info', `Restoring ${workflow.videos.length} video(s)...`);
+
         // Clear existing results
         this.engine.executionResults.clear();
 
-        // Note: We only saved metadata, not the actual video blobs
-        // The workflow will need to be re-executed to generate videos again
-        console.log(`Loaded workflow with ${Object.keys(workflow.outputs).length} previous outputs (metadata only)`);
+        // Download and restore videos
+        for (const videoAssoc of workflow.videos) {
+          try {
+            // Fetch the video blob from backend
+            const videoResponse = await fetch(`http://localhost:5001/api/videos/${videoAssoc.video_id}/download`);
+
+            if (videoResponse.ok) {
+              const videoBlob = await videoResponse.blob();
+
+              // Find the node and restore its output
+              const node = this.canvas.nodes.find(n => n.id === videoAssoc.node_id);
+              if (node) {
+                // Store in execution results
+                this.engine.executionResults.set(videoAssoc.node_id, {
+                  video: videoBlob,
+                  metadata: {
+                    job_id: videoAssoc.video_id,
+                    restored: true,
+                    ...videoAssoc
+                  }
+                });
+
+                // Also update the node's display if it has a method for that
+                if (node.type === 'VideoStitcher' && typeof node.updateConfigDisplay === 'function') {
+                  node.stitchedVideoBlob = videoBlob;
+                  node.stitchedVideo = {
+                    job_id: videoAssoc.video_id,
+                    ...videoAssoc
+                  };
+                  node.updateConfigDisplay();
+                }
+              }
+            }
+          } catch (err) {
+            console.warn(`Failed to restore video ${videoAssoc.video_id}:`, err);
+          }
+        }
       }
 
-      // Show info about outputs and assets
+      // Show info message
       let infoMessage = `Workflow "${workflowName}" loaded!`;
-      if (workflow.outputs && Object.keys(workflow.outputs).length > 0) {
-        infoMessage += `\n\nThis workflow had ${Object.keys(workflow.outputs).length} output(s) when saved.`;
-        infoMessage += `\nNote: Output videos were not saved (too large). Re-run the workflow to regenerate them.`;
-      }
-      if (workflow.assets) {
-        infoMessage += `\n\nAssets at save time: ${workflow.assets.uploadedCount} uploaded, ${workflow.assets.generatedCount} generated.`;
-        infoMessage += `\nCurrent assets: ${this.assetManager?.uploadedAssets.length || 0} uploaded, ${this.assetManager?.generatedAssets.length || 0} generated.`;
-        infoMessage += `\nNote: Assets are stored in browser IndexedDB and persist across sessions.`;
+      if (workflow.videos && workflow.videos.length > 0) {
+        infoMessage += `\n\n${workflow.videos.length} video(s) restored from backend.`;
+        infoMessage += `\nYou can view them in the node outputs or re-run the workflow to generate new videos.`;
+      } else {
+        infoMessage += `\n\nNo videos associated with this workflow. Run the workflow to generate videos.`;
       }
 
       this.updateStatus('success', `Workflow "${workflowName}" loaded!`);
+      setTimeout(() => alert(infoMessage), 100);
 
-      if (workflow.outputs || workflow.assets) {
-        setTimeout(() => alert(infoMessage), 100);
-      }
     } catch (error) {
       alert(`Failed to load workflow: ${error.message}`);
       this.updateStatus('error', 'Failed to load workflow');

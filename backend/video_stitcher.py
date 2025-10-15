@@ -194,6 +194,9 @@ class VideoStitcher:
         first_probe = ffmpeg.probe(input_videos[0])
         first_video = next(s for s in first_probe['streams'] if s['codec_type'] == 'video')
 
+        # Check if videos have audio
+        has_audio = any(s['codec_type'] == 'audio' for s in first_probe['streams'])
+
         # Determine target resolution
         if target_resolution:
             width, height = map(int, target_resolution.split('x'))
@@ -204,7 +207,7 @@ class VideoStitcher:
         # Get target framerate
         fps = eval(first_video['r_frame_rate'])  # e.g., "30/1" -> 30.0
 
-        logger.info(f"Normalizing to {width}x{height} @ {fps}fps")
+        logger.info(f"Normalizing to {width}x{height} @ {fps}fps (audio: {has_audio})")
 
         # Build ffmpeg command with multiple inputs and filters
         inputs = [ffmpeg.input(video) for video in input_videos]
@@ -220,26 +223,37 @@ class VideoStitcher:
                 .filter('setsar', '1/1')  # Set square pixel aspect ratio
                 .filter('fps', fps)
             )
-
-            audio = input_stream.audio.filter('aresample', 48000)
-
             normalized_streams.append(video)
-            normalized_streams.append(audio)
+
+            # Only process audio if present
+            if has_audio:
+                audio = input_stream.audio.filter('aresample', 48000)
+                normalized_streams.append(audio)
 
         # Concatenate all normalized streams
-        joined = ffmpeg.concat(*normalized_streams, v=1, a=1).node
-
-        # Output
-        output = ffmpeg.output(
-            joined[0],
-            joined[1],
-            output_path,
-            vcodec=video_codec,
-            acodec=audio_codec,
-            preset=preset,
-            movflags='faststart',
-            strict='experimental'
-        )
+        if has_audio:
+            joined = ffmpeg.concat(*normalized_streams, v=1, a=1).node
+            # Output with audio
+            output = ffmpeg.output(
+                joined[0],
+                joined[1],
+                output_path,
+                vcodec=video_codec,
+                acodec=audio_codec,
+                preset=preset,
+                movflags='faststart',
+                strict='experimental'
+            )
+        else:
+            joined = ffmpeg.concat(*normalized_streams, v=1, a=0).node
+            # Output without audio
+            output = ffmpeg.output(
+                joined[0],
+                output_path,
+                vcodec=video_codec,
+                preset=preset,
+                movflags='faststart'
+            )
 
         # Run ffmpeg
         output.overwrite_output().run(capture_stdout=True, capture_stderr=True)

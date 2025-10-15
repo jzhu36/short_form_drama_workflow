@@ -102,7 +102,9 @@ export class BaseNode {
       body.appendChild(summaryDiv);
     }
 
-    // Inputs
+    node.appendChild(body);
+
+    // Inputs - positioned outside scrollable body
     if (this.inputs.length > 0) {
       const inputsContainer = document.createElement('div');
       inputsContainer.className = 'workflow-node-inputs';
@@ -120,10 +122,10 @@ export class BaseNode {
         inputsContainer.appendChild(inputDiv);
       });
 
-      body.appendChild(inputsContainer);
+      node.appendChild(inputsContainer);
     }
 
-    // Outputs
+    // Outputs - positioned outside scrollable body
     if (this.outputs.length > 0) {
       const outputsContainer = document.createElement('div');
       outputsContainer.className = 'workflow-node-outputs';
@@ -141,10 +143,8 @@ export class BaseNode {
         outputsContainer.appendChild(outputDiv);
       });
 
-      body.appendChild(outputsContainer);
+      node.appendChild(outputsContainer);
     }
-
-    node.appendChild(body);
 
     // Event listeners
     node.addEventListener('mousedown', (e) => {

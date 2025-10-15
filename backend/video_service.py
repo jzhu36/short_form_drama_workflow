@@ -24,6 +24,10 @@ from prompt_generator import PromptGenerator
 # Import video stitcher
 from video_stitcher import VideoStitcher
 
+# Import media manager
+from media_manager import MediaManager
+from video_metadata import VideoMetadataExtractor
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -35,7 +39,14 @@ CORS(app)  # Enable CORS for web client
 VIDEO_DIR = Path(__file__).parent / 'videos'
 VIDEO_DIR.mkdir(exist_ok=True)
 
-# In-memory job tracking (replace with Redis/DB in production)
+# Initialize Media Manager
+media_manager = MediaManager(
+    db_path=str(Path(__file__).parent / 'media.db'),
+    video_dir=str(VIDEO_DIR)
+)
+metadata_extractor = VideoMetadataExtractor()
+
+# In-memory job tracking (legacy - will be replaced by MediaManager)
 jobs = {}
 
 
@@ -184,6 +195,51 @@ def _generate_video_async(job_id):
             logger.error(f"Job {job_id}: Download failed")
             return
 
+        # Extract metadata
+        try:
+            video_metadata = metadata_extractor.extract_metadata(str(video_path))
+        except Exception as e:
+            logger.warning(f"Job {job_id}: Failed to extract metadata - {str(e)}")
+            video_metadata = {
+                'size_bytes': video_path.stat().st_size,
+                'duration_seconds': None,
+                'resolution': None,
+                'aspect_ratio': None,
+                'codec': None,
+                'fps': None
+            }
+
+        # Add to media manager
+        try:
+            result = media_manager.add_video(
+                video_id=job_id,
+                name=f"Generated: {job.prompt[:50]}",
+                file_path=str(video_path),
+                size_bytes=video_metadata['size_bytes'],
+                source_type='generated',
+                duration_seconds=video_metadata.get('duration_seconds'),
+                resolution=video_metadata.get('resolution'),
+                aspect_ratio=video_metadata.get('aspect_ratio'),
+                codec=video_metadata.get('codec'),
+                fps=video_metadata.get('fps')
+            )
+
+            # Add generation details
+            media_manager.add_generation_details(
+                video_id=job_id,
+                provider=job.provider,
+                prompt=job.prompt,
+                model=job.settings.get('model'),
+                generation_params=job.settings,
+                job_id=job.video_id,
+                status='completed',
+                completed_at=datetime.utcnow().isoformat()
+            )
+
+            logger.info(f"Job {job_id}: Added to MediaManager (duplicate: {result.get('is_duplicate', False)})")
+        except Exception as e:
+            logger.error(f"Job {job_id}: Failed to add to MediaManager - {str(e)}")
+
         # Success
         job.status = 'completed'
         job.progress = 100
@@ -302,6 +358,54 @@ def upload_video():
         # Get file size
         file_size = video_path.stat().st_size
 
+        # Extract metadata
+        try:
+            video_metadata = metadata_extractor.extract_metadata(str(video_path))
+        except Exception as e:
+            logger.warning(f"Failed to extract metadata for uploaded video - {str(e)}")
+            video_metadata = {
+                'size_bytes': file_size,
+                'duration_seconds': None,
+                'resolution': None,
+                'aspect_ratio': None,
+                'codec': None,
+                'fps': None
+            }
+
+        # Add to media manager with deduplication
+        try:
+            result = media_manager.add_video(
+                video_id=job_id,
+                name=video_file.filename or "Uploaded video",
+                file_path=str(video_path),
+                size_bytes=video_metadata['size_bytes'],
+                source_type='uploaded',
+                duration_seconds=video_metadata.get('duration_seconds'),
+                resolution=video_metadata.get('resolution'),
+                aspect_ratio=video_metadata.get('aspect_ratio'),
+                codec=video_metadata.get('codec'),
+                fps=video_metadata.get('fps')
+            )
+
+            # If duplicate detected, use the existing video ID
+            if result.get('is_duplicate'):
+                actual_video_id = result['original_id']
+                logger.info(f"Duplicate video detected, using existing ID: {actual_video_id}")
+
+                # Delete the newly uploaded file since it's a duplicate
+                if video_path.exists():
+                    video_path.unlink()
+
+                # Get the existing video info
+                existing_video = media_manager.get_video(actual_video_id)
+                if existing_video:
+                    video_path = Path(existing_video['file_path'])
+                    job_id = actual_video_id
+            else:
+                logger.info(f"Video uploaded and added to MediaManager: {video_filename}")
+        except Exception as e:
+            logger.error(f"Failed to add uploaded video to MediaManager - {str(e)}")
+
         # Create a job entry for the uploaded video
         uploaded_job = VideoGenerationJob(
             job_id,
@@ -317,13 +421,14 @@ def upload_video():
 
         jobs[job_id] = uploaded_job
 
-        logger.info(f"Video uploaded successfully: {video_filename} ({file_size} bytes)")
+        logger.info(f"Video upload processed: {video_filename} ({file_size} bytes)")
 
         return jsonify({
             'success': True,
             'job_id': job_id,
-            'filename': video_filename,
-            'size': file_size
+            'filename': video_path.name,
+            'size': file_size,
+            'is_duplicate': result.get('is_duplicate', False) if 'result' in locals() else False
         })
 
     except Exception as e:
@@ -535,8 +640,49 @@ def stitch_videos():
             target_resolution=target_resolution
         )
 
+        # Extract metadata for the stitched video
+        stitched_path = result['output_path']
+        try:
+            video_metadata = metadata_extractor.extract_metadata(stitched_path)
+        except Exception as e:
+            logger.warning(f"Failed to extract metadata for stitched video - {str(e)}")
+            video_metadata = {
+                'size_bytes': Path(stitched_path).stat().st_size,
+                'duration_seconds': result.get('duration'),
+                'resolution': result.get('resolution'),
+                'aspect_ratio': None,
+                'codec': result.get('codec'),
+                'fps': None
+            }
+
         # Create a job entry for the stitched video
         stitched_job_id = str(uuid.uuid4())
+
+        # Add to media manager
+        try:
+            mm_result = media_manager.add_video(
+                video_id=stitched_job_id,
+                name=f"Stitched video from {len(video_paths)} inputs",
+                file_path=stitched_path,
+                size_bytes=video_metadata['size_bytes'],
+                source_type='stitched',
+                duration_seconds=video_metadata.get('duration_seconds'),
+                resolution=video_metadata.get('resolution'),
+                aspect_ratio=video_metadata.get('aspect_ratio'),
+                codec=video_metadata.get('codec'),
+                fps=video_metadata.get('fps'),
+                metadata={
+                    'input_count': len(video_paths),
+                    'input_video_ids': video_ids,
+                    'normalize': normalize,
+                    'target_resolution': target_resolution
+                }
+            )
+            logger.info(f"Stitched video added to MediaManager: {stitched_job_id}")
+        except Exception as e:
+            logger.error(f"Failed to add stitched video to MediaManager - {str(e)}")
+
+        # Create legacy job entry
         stitched_job = VideoGenerationJob(
             stitched_job_id,
             f"Stitched video from {len(video_paths)} inputs",
@@ -580,6 +726,219 @@ def stitch_videos():
 
     except Exception as e:
         logger.error(f"Failed to stitch videos: {str(e)}")
+        return jsonify({'error': str(e), 'success': False}), 500
+
+
+@app.route('/api/workflows', methods=['POST'])
+def create_workflow():
+    """
+    Create or save a workflow
+
+    Request body:
+    {
+        "workflow_id": "optional-uuid",  // If not provided, one will be generated
+        "name": "My Workflow",
+        "description": "Optional description",
+        "status": "draft" | "saved",
+        "definition": {
+            "nodes": [...],
+            "connections": [...]
+        }
+    }
+    """
+    try:
+        data = request.get_json()
+
+        workflow_id = data.get('workflow_id') or str(uuid.uuid4())
+        name = data.get('name', 'Untitled Workflow')
+        description = data.get('description', '')
+        status = data.get('status', 'draft')
+        definition = data.get('definition')
+
+        if not definition:
+            return jsonify({'error': 'Workflow definition is required'}), 400
+
+        # Check if workflow exists
+        existing = media_manager.get_workflow(workflow_id)
+
+        if existing:
+            # Update existing workflow
+            media_manager.update_workflow(
+                workflow_id=workflow_id,
+                name=name,
+                description=description,
+                status=status,
+                definition=definition
+            )
+            logger.info(f"Updated workflow: {workflow_id}")
+        else:
+            # Create new workflow
+            workflow = media_manager.create_workflow(
+                workflow_id=workflow_id,
+                name=name,
+                description=description,
+                definition=definition,
+                status=status
+            )
+            logger.info(f"Created workflow: {workflow_id}")
+
+        return jsonify({
+            'success': True,
+            'workflow_id': workflow_id,
+            'status': status
+        })
+
+    except Exception as e:
+        logger.error(f"Failed to create/update workflow: {str(e)}")
+        return jsonify({'error': str(e), 'success': False}), 500
+
+
+@app.route('/api/workflows/<workflow_id>', methods=['GET'])
+def get_workflow(workflow_id):
+    """Get a workflow by ID with associated videos"""
+    try:
+        workflow = media_manager.get_workflow(workflow_id)
+
+        if not workflow:
+            return jsonify({'error': 'Workflow not found'}), 404
+
+        return jsonify({
+            'success': True,
+            'workflow': workflow
+        })
+
+    except Exception as e:
+        logger.error(f"Failed to get workflow: {str(e)}")
+        return jsonify({'error': str(e), 'success': False}), 500
+
+
+@app.route('/api/workflows', methods=['GET'])
+def list_workflows():
+    """List all workflows with optional status filter"""
+    try:
+        status = request.args.get('status')  # Optional filter: 'draft' or 'saved'
+
+        workflows = media_manager.list_workflows(status=status)
+
+        return jsonify({
+            'success': True,
+            'workflows': workflows,
+            'count': len(workflows)
+        })
+
+    except Exception as e:
+        logger.error(f"Failed to list workflows: {str(e)}")
+        return jsonify({'error': str(e), 'success': False}), 500
+
+
+@app.route('/api/workflows/<workflow_id>', methods=['PUT'])
+def update_workflow(workflow_id):
+    """
+    Update a workflow
+
+    Request body can contain any of:
+    {
+        "name": "Updated name",
+        "description": "Updated description",
+        "status": "saved",
+        "definition": {...}
+    }
+    """
+    try:
+        data = request.get_json()
+
+        # Check if workflow exists
+        existing = media_manager.get_workflow(workflow_id)
+        if not existing:
+            return jsonify({'error': 'Workflow not found'}), 404
+
+        # Update workflow
+        media_manager.update_workflow(
+            workflow_id=workflow_id,
+            name=data.get('name'),
+            description=data.get('description'),
+            status=data.get('status'),
+            definition=data.get('definition')
+        )
+
+        logger.info(f"Updated workflow: {workflow_id}")
+
+        return jsonify({
+            'success': True,
+            'workflow_id': workflow_id
+        })
+
+    except Exception as e:
+        logger.error(f"Failed to update workflow: {str(e)}")
+        return jsonify({'error': str(e), 'success': False}), 500
+
+
+@app.route('/api/workflows/<workflow_id>', methods=['DELETE'])
+def delete_workflow(workflow_id):
+    """Delete a workflow (does not delete associated videos)"""
+    try:
+        existing = media_manager.get_workflow(workflow_id)
+        if not existing:
+            return jsonify({'error': 'Workflow not found'}), 404
+
+        media_manager.delete_workflow(workflow_id)
+
+        logger.info(f"Deleted workflow: {workflow_id}")
+
+        return jsonify({
+            'success': True,
+            'message': 'Workflow deleted successfully'
+        })
+
+    except Exception as e:
+        logger.error(f"Failed to delete workflow: {str(e)}")
+        return jsonify({'error': str(e), 'success': False}), 500
+
+
+@app.route('/api/workflows/<workflow_id>/videos', methods=['POST'])
+def associate_workflow_video(workflow_id):
+    """
+    Associate a video with a workflow node
+
+    Request body:
+    {
+        "video_id": "video-uuid",
+        "node_id": "node-id",
+        "node_type": "Sora2Video",
+        "role": "output" | "input" | "intermediate",
+        "execution_id": "optional-execution-id"
+    }
+    """
+    try:
+        data = request.get_json()
+
+        video_id = data.get('video_id')
+        node_id = data.get('node_id')
+        node_type = data.get('node_type')
+        role = data.get('role', 'output')
+        execution_id = data.get('execution_id')
+
+        if not all([video_id, node_id, node_type]):
+            return jsonify({'error': 'video_id, node_id, and node_type are required'}), 400
+
+        media_manager.associate_video_with_workflow(
+            workflow_id=workflow_id,
+            video_id=video_id,
+            node_id=node_id,
+            node_type=node_type,
+            role=role,
+            execution_id=execution_id
+        )
+
+        logger.info(f"Associated video {video_id} with workflow {workflow_id} node {node_id}")
+
+        return jsonify({
+            'success': True,
+            'message': 'Video associated with workflow'
+        })
+
+    except Exception as e:
+        logger.error(f"Failed to associate video with workflow: {str(e)}")
         return jsonify({'error': str(e), 'success': False}), 500
 
 
