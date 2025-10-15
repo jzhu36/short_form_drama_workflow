@@ -5,6 +5,9 @@
 
 import { TextInputNode } from './nodes/TextInputNode.js';
 import { Sora2VideoNode } from './nodes/Sora2VideoNode.js';
+import { PromptGeneratorNode } from './nodes/PromptGeneratorNode.js';
+import { VideoStitcherNode } from './nodes/VideoStitcherNode.js';
+import { VideoNode } from './nodes/VideoNode.js';
 
 export class WorkflowCanvas {
   constructor(containerId) {
@@ -25,7 +28,10 @@ export class WorkflowCanvas {
 
     this.nodeRegistry = {
       'TextInput': TextInputNode,
-      'Sora2Video': Sora2VideoNode
+      'Video': VideoNode,
+      'Sora2Video': Sora2VideoNode,
+      'PromptGenerator': PromptGeneratorNode,
+      'VideoStitcher': VideoStitcherNode
     };
   }
 
@@ -87,12 +93,32 @@ export class WorkflowCanvas {
     document.addEventListener('mouseup', (e) => {
       this.handleMouseUp(e);
     });
+
+    // Drag and drop support for assets
+    this.canvas.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+      this.canvas.classList.add('drag-over');
+    });
+
+    this.canvas.addEventListener('dragleave', (e) => {
+      if (e.target === this.canvas) {
+        this.canvas.classList.remove('drag-over');
+      }
+    });
+
+    this.canvas.addEventListener('drop', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.canvas.classList.remove('drag-over');
+      this.handleAssetDrop(e);
+    });
   }
 
   /**
    * Add a new node to the canvas
    */
-  addNode(type, position) {
+  addNode(type, position, config = null) {
     const NodeClass = this.nodeRegistry[type];
     if (!NodeClass) {
       console.error(`Unknown node type: ${type}`);
@@ -100,17 +126,35 @@ export class WorkflowCanvas {
     }
 
     const node = new NodeClass(null, position);
+
+    // Set initial config if provided
+    if (config) {
+      node.config = { ...node.config, ...config };
+    }
+
     this.nodes.push(node);
 
-    // Render the node
-    const element = node.render({
+    // Set port change callback
+    node.onPortsChanged = (n) => this.cleanupInvalidConnections(n);
+
+    // Render the node with callbacks
+    const callbacks = {
       onNodeMouseDown: (n, e) => this.handleNodeMouseDown(n, e),
       onNodeDoubleClick: (n, e) => this.handleNodeDoubleClick(n, e),
       onNodeDelete: (n, e) => this.handleNodeDelete(n, e),
       onPortMouseDown: (n, port, e) => this.handlePortMouseDown(n, port, e)
-    });
+    };
+
+    node.setRenderCallbacks(callbacks);
+    const element = node.render(callbacks);
 
     this.nodesLayer.appendChild(element);
+
+    // Update display to show config
+    if (config) {
+      node.updateConfigDisplay();
+    }
+
     return node;
   }
 
@@ -426,12 +470,15 @@ export class WorkflowCanvas {
         node.fromJSON(nodeData);
         this.nodes.push(node);
 
-        const element = node.render({
+        const callbacks = {
           onNodeMouseDown: (n, e) => this.handleNodeMouseDown(n, e),
           onNodeDoubleClick: (n, e) => this.handleNodeDoubleClick(n, e),
           onNodeDelete: (n, e) => this.handleNodeDelete(n, e),
           onPortMouseDown: (n, port, e) => this.handlePortMouseDown(n, port, e)
-        });
+        };
+
+        node.setRenderCallbacks(callbacks);
+        const element = node.render(callbacks);
 
         this.nodesLayer.appendChild(element);
       }
@@ -439,6 +486,97 @@ export class WorkflowCanvas {
 
     // Recreate connections
     this.connections = data.connections || [];
+    this.redrawConnections();
+  }
+
+  /**
+   * Handle asset drop from asset manager
+   */
+  handleAssetDrop(event) {
+    // Check if this is an asset drag
+    const isAssetDrag = event.dataTransfer.getData('assetDrag');
+    if (!isAssetDrag) return;
+
+    const assetId = event.dataTransfer.getData('assetId');
+    const assetCategory = event.dataTransfer.getData('assetCategory');
+
+    if (!assetId || !this.assetManager) return;
+
+    // Get the asset from asset manager
+    const asset = this.assetManager.getAsset(assetId, assetCategory);
+    if (!asset || asset.type !== 'video') {
+      console.warn('Only video assets can be dropped on the canvas');
+      return;
+    }
+
+    // Calculate drop position relative to canvas
+    const canvasRect = this.canvas.getBoundingClientRect();
+    const position = {
+      x: event.clientX - canvasRect.left - 100, // Center the node on cursor
+      y: event.clientY - canvasRect.top - 50
+    };
+
+    // Create a Video node with the asset's info
+    let videoPath = '';
+    let videoName = asset.name;
+
+    if (assetCategory === 'generated') {
+      // For generated videos, we need to get the job ID or use a stored reference
+      // The asset might have metadata with job_id
+      if (asset.jobId) {
+        videoPath = asset.jobId;
+      } else {
+        // Try to extract from metadata or use a temp reference
+        videoName = asset.name || (asset.prompt ? asset.prompt.substring(0, 30) + '...' : 'Generated Video');
+      }
+    }
+
+    // Create Video node with configuration
+    const videoNode = this.addNode('Video', position, {
+      video_name: videoName,
+      video_path: videoPath,
+      asset_id: assetId,
+      asset_category: assetCategory
+    });
+
+    if (videoNode) {
+      // Store the asset blob in the node for immediate use
+      videoNode.videoBlob = asset.blob;
+      videoNode.videoMetadata = {
+        duration: asset.duration || 0,
+        resolution: asset.resolution || 'Unknown',
+        size: asset.blob ? asset.blob.size : 0,
+        provider: asset.provider,
+        prompt: asset.prompt
+      };
+
+      // Update the node display to show the video preview
+      videoNode.updateConfigDisplay();
+
+      console.log(`Created Video node from asset: ${videoName}`);
+    }
+  }
+
+  /**
+   * Clean up invalid connections after port changes
+   * Removes connections to ports that no longer exist
+   */
+  cleanupInvalidConnections(node) {
+    const validInputIds = new Set(node.inputs.map(i => i.id));
+    const validOutputIds = new Set(node.outputs.map(o => o.id));
+
+    // Remove connections that reference non-existent ports
+    this.connections = this.connections.filter(conn => {
+      // Check if connection involves this node
+      if (conn.from.nodeId === node.id) {
+        return validOutputIds.has(conn.from.portId);
+      }
+      if (conn.to.nodeId === node.id) {
+        return validInputIds.has(conn.to.portId);
+      }
+      return true;
+    });
+
     this.redrawConnections();
   }
 }

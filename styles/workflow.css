@@ -309,6 +309,46 @@
   background-color: var(--primary-hover);
 }
 
+.btn-view-fullscreen {
+  width: 100%;
+  margin-top: 0.5rem;
+  padding: 0.375rem;
+  background-color: var(--primary-color);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.btn-view-fullscreen:hover {
+  background-color: var(--primary-hover);
+}
+
+/* Error section styling */
+.config-error-section {
+  border-left: 3px solid #ef4444;
+  background-color: #fef2f2;
+  padding: 0.75rem;
+  margin-top: 0.5rem;
+}
+
+.config-error-section .config-section-title {
+  color: #dc2626;
+  border-bottom-color: #fecaca;
+}
+
+.config-error-message {
+  color: #991b1b;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  padding: 0.5rem;
+  background-color: white;
+  border-radius: 4px;
+  border: 1px solid #fecaca;
+}
+
 /* Node Ports */
 .workflow-node-inputs,
 .workflow-node-outputs {
@@ -736,6 +776,93 @@
 
 .prompt-modal-ok {
   min-width: 80px;
+}
+
+/* Video List for VideoNode selection dialog */
+.video-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.video-item {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+  background-color: white;
+}
+
+.video-item:hover {
+  border-color: var(--primary-color);
+  background-color: #eff6ff;
+  transform: translateX(4px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.video-item-icon {
+  font-size: 2rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.video-item-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.video-item-prompt {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--text-color);
+  margin-bottom: 0.25rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.video-item-meta {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.video-item-meta span {
+  margin-right: 0.5rem;
+}
+
+/* Browse button styling */
+.btn-browse {
+  padding: 0.5rem 0.75rem;
+  background-color: var(--primary-color);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.875rem;
+  transition: background-color 0.2s;
+}
+
+.btn-browse:hover {
+  background-color: #1d4ed8;
+}
+
+.btn-clear {
+  padding: 0.5rem 0.75rem;
+  background-color: #6b7280;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.875rem;
+  transition: background-color 0.2s;
+}
+
+.btn-clear:hover {
+  background-color: #4b5563;
 }
 
 /* Responsive */

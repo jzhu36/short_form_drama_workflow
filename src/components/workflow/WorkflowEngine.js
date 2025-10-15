@@ -94,7 +94,7 @@ export class WorkflowEngine {
   gatherInputs(node) {
     const inputs = {};
 
-    node.inputs.forEach(input => {
+    node.inputs.forEach((input, index) => {
       // Find connections to this input
       const connection = this.canvas.connections.find(conn =>
         conn.to.nodeId === node.id && conn.to.portId === input.id
@@ -106,10 +106,43 @@ export class WorkflowEngine {
         if (sourceNode) {
           const sourceOutputs = this.executionResults.get(sourceNode.id);
           if (sourceOutputs) {
-            // Map output to input by name (e.g., "text" -> "prompt")
-            // For now, we'll use the first output value
-            const outputKey = Object.keys(sourceOutputs)[0];
-            inputs[input.name.toLowerCase()] = sourceOutputs[outputKey];
+            // Determine the input key based on the type of node and input
+            let inputKey;
+
+            // For video inputs, use "video_N" format (e.g., "video_1", "video_2")
+            if (input.type === 'video' && input.name.match(/video\s+\d+/i)) {
+              const match = input.name.match(/\d+/);
+              if (match) {
+                inputKey = `video_${match[0]}`;
+              } else {
+                inputKey = input.name.toLowerCase().replace(/\s+/g, '_');
+              }
+            }
+            // For text inputs, use simple lowercase (e.g., "outline", "prompt")
+            else if (input.type === 'text') {
+              inputKey = input.name.toLowerCase().replace(/\s+/g, '_');
+            }
+            // For single video input (pass-through), use "video"
+            else if (input.type === 'video') {
+              inputKey = 'video';
+            }
+            // Default: convert to snake_case
+            else {
+              inputKey = input.name.toLowerCase().replace(/\s+/g, '_');
+            }
+
+            // Get the actual output value - handle both single and multiple outputs
+            if (sourceOutputs.video) {
+              // Video output
+              inputs[inputKey] = sourceOutputs.video;
+            } else if (sourceOutputs.text) {
+              // Text output
+              inputs[inputKey] = sourceOutputs.text;
+            } else {
+              // For other types, use the first output value
+              const outputKey = Object.keys(sourceOutputs)[0];
+              inputs[inputKey] = sourceOutputs[outputKey];
+            }
           }
         }
       }

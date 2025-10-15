@@ -18,6 +18,12 @@ import logging
 sys.path.insert(0, '/Users/junmingz/claude_projects/ai-short-drama')
 from video_generator import VideoGenerator, download_video, download_with_curl
 
+# Import prompt generator
+from prompt_generator import PromptGenerator
+
+# Import video stitcher
+from video_stitcher import VideoStitcher
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -258,6 +264,323 @@ def delete_job(job_id):
     del jobs[job_id]
 
     return jsonify({'message': 'Job deleted successfully'})
+
+
+@app.route('/api/videos/upload', methods=['POST'])
+def upload_video():
+    """
+    Upload a video file temporarily for use in stitching
+
+    Expects multipart/form-data with a 'video' file field
+
+    Response:
+    {
+        "success": true,
+        "job_id": "uploaded_job_id",
+        "filename": "uploaded_video.mp4",
+        "size": 12345678
+    }
+    """
+    try:
+        # Check if video file is present
+        if 'video' not in request.files:
+            return jsonify({'error': 'No video file provided'}), 400
+
+        video_file = request.files['video']
+
+        if video_file.filename == '':
+            return jsonify({'error': 'No video file selected'}), 400
+
+        # Generate job ID for this upload
+        job_id = str(uuid.uuid4())
+
+        # Save video to disk
+        video_filename = f"{job_id}.mp4"
+        video_path = VIDEO_DIR / video_filename
+        video_file.save(str(video_path))
+
+        # Get file size
+        file_size = video_path.stat().st_size
+
+        # Create a job entry for the uploaded video
+        uploaded_job = VideoGenerationJob(
+            job_id,
+            "Uploaded video",
+            "upload",
+            {}
+        )
+        uploaded_job.status = 'completed'
+        uploaded_job.progress = 100
+        uploaded_job.video_path = str(video_path)
+        uploaded_job.video_url = f"/api/videos/{job_id}/download"
+        uploaded_job.completed_at = datetime.utcnow().isoformat()
+
+        jobs[job_id] = uploaded_job
+
+        logger.info(f"Video uploaded successfully: {video_filename} ({file_size} bytes)")
+
+        return jsonify({
+            'success': True,
+            'job_id': job_id,
+            'filename': video_filename,
+            'size': file_size
+        })
+
+    except Exception as e:
+        logger.error(f"Failed to upload video: {str(e)}")
+        return jsonify({'error': str(e), 'success': False}), 500
+
+
+@app.route('/api/prompts/generate', methods=['POST'])
+def generate_prompts():
+    """
+    Generate multiple prompts using GPT API
+
+    Request body:
+    {
+        "system_prompt": "You are an expert film director...",
+        "user_prompt": "Generate prompts for...",
+        "prompt_count": 5,
+        "temperature": 0.7,  // optional
+        "max_tokens": 2000   // optional
+    }
+
+    Response:
+    {
+        "prompts": ["prompt 1", "prompt 2", ...],
+        "count": 5,
+        "success": true
+    }
+    """
+    try:
+        data = request.get_json()
+
+        # Extract required parameters
+        system_prompt = data.get('system_prompt')
+        user_prompt = data.get('user_prompt')
+        prompt_count = data.get('prompt_count')
+
+        # Validate required parameters
+        if not system_prompt:
+            return jsonify({'error': 'system_prompt is required'}), 400
+        if not user_prompt:
+            return jsonify({'error': 'user_prompt is required'}), 400
+        if not prompt_count:
+            return jsonify({'error': 'prompt_count is required'}), 400
+
+        # Extract optional parameters
+        temperature = data.get('temperature')
+        max_tokens = data.get('max_tokens')
+
+        logger.info(f"Generating {prompt_count} prompts with GPT")
+
+        # Initialize prompt generator (will use OPENAI_API_KEY from env)
+        generator = PromptGenerator()
+
+        # Generate prompts
+        prompts = generator.generate_prompts(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            prompt_count=prompt_count,
+            temperature=temperature,
+            max_tokens=max_tokens
+        )
+
+        logger.info(f"Successfully generated {len(prompts)} prompts")
+
+        return jsonify({
+            'success': True,
+            'prompts': prompts,
+            'count': len(prompts)
+        })
+
+    except ValueError as e:
+        # Validation errors from PromptGenerator
+        logger.error(f"Validation error: {str(e)}")
+        return jsonify({'error': str(e), 'success': False}), 400
+
+    except Exception as e:
+        logger.error(f"Failed to generate prompts: {str(e)}")
+        return jsonify({'error': str(e), 'success': False}), 500
+
+
+@app.route('/api/prompts/generate-episodes', methods=['POST'])
+def generate_episode_prompts():
+    """
+    Generate episode prompts for short form drama
+
+    Convenience endpoint with pre-configured system prompt for film directors.
+
+    Request body:
+    {
+        "outline": "Story outline text...",
+        "episode_count": 10,
+        "temperature": 0.7  // optional
+    }
+
+    Response:
+    {
+        "prompts": ["episode 1 prompt", "episode 2 prompt", ...],
+        "count": 10,
+        "success": true
+    }
+    """
+    try:
+        data = request.get_json()
+
+        # Extract parameters
+        outline = data.get('outline')
+        episode_count = data.get('episode_count')
+        temperature = data.get('temperature')
+
+        # Validate required parameters
+        if not outline:
+            return jsonify({'error': 'outline is required'}), 400
+        if not episode_count:
+            return jsonify({'error': 'episode_count is required'}), 400
+
+        logger.info(f"Generating {episode_count} episode prompts")
+
+        # Initialize prompt generator
+        generator = PromptGenerator()
+
+        # Generate episode prompts using convenience method
+        prompts = generator.generate_episode_prompts(
+            outline=outline,
+            episode_count=episode_count,
+            temperature=temperature
+        )
+
+        logger.info(f"Successfully generated {len(prompts)} episode prompts")
+
+        return jsonify({
+            'success': True,
+            'prompts': prompts,
+            'count': len(prompts)
+        })
+
+    except ValueError as e:
+        logger.error(f"Validation error: {str(e)}")
+        return jsonify({'error': str(e), 'success': False}), 400
+
+    except Exception as e:
+        logger.error(f"Failed to generate episode prompts: {str(e)}")
+        return jsonify({'error': str(e), 'success': False}), 500
+
+
+@app.route('/api/videos/stitch', methods=['POST'])
+def stitch_videos():
+    """
+    Stitch multiple videos together
+
+    Request body:
+    {
+        "video_ids": ["job_id1", "job_id2", "job_id3"],  // List of job IDs or file paths
+        "normalize": true,  // Optional, default: true
+        "target_resolution": "1920x1080"  // Optional
+    }
+
+    Response:
+    {
+        "success": true,
+        "job_id": "stitched_job_id",
+        "output_path": "/path/to/stitched.mp4",
+        "duration": 30.5,
+        "size": 12345678,
+        "resolution": "1920x1080",
+        "input_count": 3
+    }
+    """
+    try:
+        data = request.get_json()
+        video_ids = data.get('video_ids', [])
+        normalize = data.get('normalize', True)
+        target_resolution = data.get('target_resolution')
+
+        # Validate input
+        if not video_ids or len(video_ids) == 0:
+            return jsonify({'error': 'video_ids is required and must not be empty'}), 400
+
+        if len(video_ids) > 100:
+            return jsonify({'error': 'Too many videos (max 100)'}), 400
+
+        logger.info(f"Stitching {len(video_ids)} videos together")
+
+        # Resolve video paths from job IDs
+        video_paths = []
+        for video_id in video_ids:
+            # Check if it's a job ID
+            job = jobs.get(video_id)
+            if job and job.video_path and Path(job.video_path).exists():
+                video_paths.append(job.video_path)
+            # Check if it's a direct file path
+            elif Path(video_id).exists():
+                video_paths.append(str(video_id))
+            # Check if it's a filename in VIDEO_DIR
+            elif (VIDEO_DIR / video_id).exists():
+                video_paths.append(str(VIDEO_DIR / video_id))
+            else:
+                return jsonify({'error': f'Video not found: {video_id}'}), 404
+
+        if len(video_paths) == 0:
+            return jsonify({'error': 'No valid video files found'}), 400
+
+        # Initialize video stitcher
+        stitcher = VideoStitcher(output_dir=str(VIDEO_DIR))
+
+        # Stitch videos
+        result = stitcher.stitch_videos(
+            input_videos=video_paths,
+            normalize=normalize,
+            target_resolution=target_resolution
+        )
+
+        # Create a job entry for the stitched video
+        stitched_job_id = str(uuid.uuid4())
+        stitched_job = VideoGenerationJob(
+            stitched_job_id,
+            f"Stitched video from {len(video_paths)} inputs",
+            "stitcher",
+            {"input_count": len(video_paths)}
+        )
+        stitched_job.status = 'completed'
+        stitched_job.progress = 100
+        stitched_job.video_path = result['output_path']
+        stitched_job.video_url = f"/api/videos/{stitched_job_id}/download"
+        stitched_job.completed_at = datetime.utcnow().isoformat()
+
+        jobs[stitched_job_id] = stitched_job
+
+        logger.info(f"Successfully stitched videos: {result['output_path']}")
+
+        return jsonify({
+            'success': True,
+            'job_id': stitched_job_id,
+            'output_path': result['output_path'],
+            'filename': result['filename'],
+            'duration': result['duration'],
+            'size': result['size'],
+            'resolution': result['resolution'],
+            'codec': result['codec'],
+            'input_count': result['input_count'],
+            'video_url': stitched_job.video_url
+        })
+
+    except FileNotFoundError as e:
+        logger.error(f"File not found: {str(e)}")
+        return jsonify({'error': str(e), 'success': False}), 404
+
+    except ValueError as e:
+        logger.error(f"Validation error: {str(e)}")
+        return jsonify({'error': str(e), 'success': False}), 400
+
+    except RuntimeError as e:
+        logger.error(f"Stitching failed: {str(e)}")
+        return jsonify({'error': str(e), 'success': False}), 500
+
+    except Exception as e:
+        logger.error(f"Failed to stitch videos: {str(e)}")
+        return jsonify({'error': str(e), 'success': False}), 500
 
 
 if __name__ == '__main__':

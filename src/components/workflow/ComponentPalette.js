@@ -17,11 +17,32 @@ export class ComponentPalette {
         color: '#10b981'
       },
       {
+        type: 'Video',
+        name: 'Video',
+        icon: '🎥',
+        description: 'Pass-through video or load from file',
+        color: '#059669'
+      },
+      {
+        type: 'PromptGenerator',
+        name: 'Prompt Generator',
+        icon: '✨',
+        description: 'Generate episode prompts from outline',
+        color: '#8b5cf6'
+      },
+      {
         type: 'Sora2Video',
         name: 'Sora2 Video',
         icon: '🎬',
         description: 'Generate video from text prompt',
         color: '#2563eb'
+      },
+      {
+        type: 'VideoStitcher',
+        name: 'Video Stitcher',
+        icon: '🎞️',
+        description: 'Stitch multiple videos together',
+        color: '#f59e0b'
       }
     ];
   }
@@ -113,16 +134,23 @@ export class ComponentPalette {
     });
 
     canvasElement.addEventListener('drop', (e) => {
-      e.preventDefault();
       const componentType = e.dataTransfer.getData('componentType');
+      const assetDrag = e.dataTransfer.getData('assetDrag');
 
-      if (componentType) {
-        const canvasRect = canvasElement.getBoundingClientRect();
-        const x = e.clientX - canvasRect.left - 100; // Offset to center node
-        const y = e.clientY - canvasRect.top - 30;
-
-        this.canvas.addNode(componentType, { x, y });
+      // Only handle component drops here, let WorkflowCanvas handle asset drops
+      if (!componentType || assetDrag === 'true') {
+        return; // Let WorkflowCanvas handle this
       }
+
+      e.preventDefault();
+      e.stopPropagation();
+
+      const canvasRect = canvasElement.getBoundingClientRect();
+      const x = e.clientX - canvasRect.left - 100; // Offset to center node
+      const y = e.clientY - canvasRect.top - 30;
+
+      // Regular component drop
+      this.canvas.addNode(componentType, { x, y });
     });
   }
 }

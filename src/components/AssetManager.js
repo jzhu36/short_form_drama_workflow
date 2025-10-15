@@ -12,6 +12,7 @@ export class AssetManager {
     this.uploadedAssets = [];
     this.generatedAssets = [];
     this.onAssetSelect = null;
+    this.onAssetDrag = null; // Callback for drag operations
     this.dbService = indexedDBService;
   }
 
@@ -100,9 +101,15 @@ export class AssetManager {
    * Handle file upload
    */
   async handleFileUpload(files) {
+    if (!files || files.length === 0) return;
+
+    const assetsToAdd = [];
+    const invalidFiles = [];
+
+    // Process all files first
     for (const file of files) {
       if (!this.isValidFile(file)) {
-        alert(`Invalid file type: ${file.name}. Only images and videos are supported.`);
+        invalidFiles.push(file.name);
         continue;
       }
 
@@ -115,7 +122,17 @@ export class AssetManager {
         blob: file
       };
 
-      this.uploadedAssets.push(asset);
+      assetsToAdd.push(asset);
+    }
+
+    // Show errors for invalid files
+    if (invalidFiles.length > 0) {
+      alert(`Invalid file type(s): ${invalidFiles.join(', ')}. Only images and videos are supported.`);
+    }
+
+    // Add all valid assets at once
+    if (assetsToAdd.length > 0) {
+      this.uploadedAssets.push(...assetsToAdd);
       await this.saveToStorage();
       this.renderUploadedAssets();
     }
@@ -191,7 +208,7 @@ export class AssetManager {
 
     if (category === 'uploaded') {
       return `
-        <div class="asset-card" data-id="${asset.id}" data-category="${category}">
+        <div class="asset-card" data-id="${asset.id}" data-category="${category}" draggable="${isVideo}">
           <div class="asset-thumbnail">
             ${isVideo ?
               `<video src="${thumbnailUrl}" muted></video>` :
@@ -216,7 +233,7 @@ export class AssetManager {
     } else {
       // Generated assets with more metadata
       return `
-        <div class="asset-card" data-id="${asset.id}" data-category="${category}">
+        <div class="asset-card" data-id="${asset.id}" data-category="${category}" draggable="true">
           <div class="asset-thumbnail">
             <video src="${thumbnailUrl}" muted></video>
             <div class="asset-type-badge">🎬</div>
@@ -281,6 +298,48 @@ export class AssetManager {
         const category = card.dataset.category;
         this.selectAsset(id, category);
       });
+
+      // Double-click on video asset to show full info
+      card.addEventListener('dblclick', (e) => {
+        if (e.target.closest('.asset-actions')) return; // Ignore clicks on action buttons
+
+        const id = card.dataset.id;
+        const category = card.dataset.category;
+        const assets = category === 'uploaded' ? this.uploadedAssets : this.generatedAssets;
+        const asset = assets.find(a => a.id === id);
+
+        if (asset && asset.type === 'video') {
+          this.showAssetDetailDialog(asset, category);
+        }
+      });
+
+      // Drag start event for video assets
+      if (card.draggable) {
+        card.addEventListener('dragstart', (e) => {
+          const id = card.dataset.id;
+          const category = card.dataset.category;
+          const assets = category === 'uploaded' ? this.uploadedAssets : this.generatedAssets;
+          const asset = assets.find(a => a.id === id);
+
+          if (asset) {
+            // Store asset data for the drop handler
+            e.dataTransfer.setData('assetDrag', 'true');
+            e.dataTransfer.setData('assetId', id);
+            e.dataTransfer.setData('assetCategory', category);
+            e.dataTransfer.effectAllowed = 'copy';
+            card.classList.add('dragging');
+
+            // Trigger callback if set
+            if (this.onAssetDrag) {
+              this.onAssetDrag(asset, category);
+            }
+          }
+        });
+
+        card.addEventListener('dragend', (e) => {
+          card.classList.remove('dragging');
+        });
+      }
     });
 
     // Delete buttons
@@ -415,6 +474,21 @@ export class AssetManager {
   }
 
   /**
+   * Set callback for asset drag
+   */
+  setOnAssetDrag(callback) {
+    this.onAssetDrag = callback;
+  }
+
+  /**
+   * Get asset by ID and category
+   */
+  getAsset(id, category) {
+    const assets = category === 'uploaded' ? this.uploadedAssets : this.generatedAssets;
+    return assets.find(a => a.id === id);
+  }
+
+  /**
    * Format file size
    */
   formatFileSize(bytes) {
@@ -447,5 +521,127 @@ export class AssetManager {
 
     this.renderUploadedAssets();
     this.renderGeneratedAssets();
+  }
+
+  /**
+   * Show asset detail dialog with full information and playable video
+   */
+  showAssetDetailDialog(asset, category) {
+    const dialog = document.createElement('div');
+    dialog.className = 'asset-detail-dialog';
+
+    const videoUrl = asset.blob ? URL.createObjectURL(asset.blob) : '';
+    const date = new Date(asset.uploadedAt || asset.generatedAt).toLocaleString();
+
+    let metadataHTML = '';
+    if (category === 'generated') {
+      metadataHTML = `
+        <div class="asset-detail-section">
+          <h4>Metadata</h4>
+          <div class="asset-detail-meta">
+            <div class="asset-detail-meta-row">
+              <span class="label">Provider:</span>
+              <span class="value">${asset.provider || 'Unknown'}</span>
+            </div>
+            ${asset.model ? `
+              <div class="asset-detail-meta-row">
+                <span class="label">Model:</span>
+                <span class="value">${asset.model}</span>
+              </div>
+            ` : ''}
+            ${asset.resolution ? `
+              <div class="asset-detail-meta-row">
+                <span class="label">Resolution:</span>
+                <span class="value">${asset.resolution}</span>
+              </div>
+            ` : ''}
+            ${asset.duration ? `
+              <div class="asset-detail-meta-row">
+                <span class="label">Duration:</span>
+                <span class="value">${asset.duration}</span>
+              </div>
+            ` : ''}
+          </div>
+        </div>
+        ${asset.prompt ? `
+          <div class="asset-detail-section">
+            <h4>Prompt</h4>
+            <div class="asset-detail-prompt">${asset.prompt}</div>
+          </div>
+        ` : ''}
+      `;
+    }
+
+    dialog.innerHTML = `
+      <div class="asset-detail-content">
+        <div class="asset-detail-header">
+          <h3>${asset.name}</h3>
+          <button class="asset-detail-close">&times;</button>
+        </div>
+        <div class="asset-detail-body">
+          <div class="asset-detail-section">
+            <h4>Video Preview</h4>
+            <div class="asset-detail-video">
+              <video controls autoplay>
+                <source src="${videoUrl}" type="video/mp4">
+                Your browser does not support the video tag.
+              </video>
+            </div>
+          </div>
+          <div class="asset-detail-section">
+            <h4>Information</h4>
+            <div class="asset-detail-meta">
+              <div class="asset-detail-meta-row">
+                <span class="label">Category:</span>
+                <span class="value">${category === 'uploaded' ? 'Uploaded' : 'Generated'}</span>
+              </div>
+              <div class="asset-detail-meta-row">
+                <span class="label">Date:</span>
+                <span class="value">${date}</span>
+              </div>
+              ${asset.size ? `
+                <div class="asset-detail-meta-row">
+                  <span class="label">Size:</span>
+                  <span class="value">${this.formatFileSize(asset.size)}</span>
+                </div>
+              ` : ''}
+            </div>
+          </div>
+          ${metadataHTML}
+        </div>
+        <div class="asset-detail-footer">
+          <button class="btn btn-primary" id="asset-detail-download">Download</button>
+          <button class="btn" id="asset-detail-close-btn">Close</button>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(dialog);
+
+    // Close handlers
+    const closeDialog = () => {
+      URL.revokeObjectURL(videoUrl);
+      document.body.removeChild(dialog);
+    };
+
+    dialog.querySelector('.asset-detail-close').addEventListener('click', closeDialog);
+    dialog.querySelector('#asset-detail-close-btn').addEventListener('click', closeDialog);
+    dialog.addEventListener('click', (e) => {
+      if (e.target === dialog) closeDialog();
+    });
+
+    // Download handler
+    dialog.querySelector('#asset-detail-download').addEventListener('click', () => {
+      this.downloadAsset(asset.id, category);
+    });
+
+    // ESC key to close
+    const escHandler = (e) => {
+      if (e.key === 'Escape') {
+        closeDialog();
+        document.removeEventListener('keydown', escHandler);
+      }
+    };
+    document.addEventListener('keydown', escHandler);
   }
 }

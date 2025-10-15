@@ -186,10 +186,15 @@ export class PromptGeneratorNode extends BaseNode {
           const oldEpisodeCount = this.config.episode_count;
           this.config.episode_count = parseInt(episodeCountInput.value) || 5;
 
-          // If episode count changed, rebuild outputs
+          // If episode count changed, rebuild outputs and clean up connections
           if (oldEpisodeCount !== this.config.episode_count) {
             this.outputs = this.defineOutputs();
             this.updateElement();
+
+            // Trigger port change event so canvas can cleanup invalid connections
+            if (this.onPortsChanged) {
+              this.onPortsChanged(this);
+            }
           }
 
           this.updateConfigDisplay();

@@ -258,6 +258,38 @@ export class BaseNode {
   }
 
   /**
+   * Update the entire node element (ports and all)
+   * This should be called when inputs/outputs change
+   * The canvas should handle cleaning up old connections
+   */
+  updateElement() {
+    if (!this.element || !this.element.parentNode) return;
+
+    // Store the callbacks from when we first rendered
+    if (!this._renderCallbacks) {
+      console.warn('Cannot update element: no stored callbacks');
+      return;
+    }
+
+    // Get parent and remove old element
+    const parent = this.element.parentNode;
+    const oldElement = this.element;
+
+    // Re-render with same callbacks
+    const newElement = this.render(this._renderCallbacks);
+
+    // Replace in DOM
+    parent.replaceChild(newElement, oldElement);
+  }
+
+  /**
+   * Store render callbacks for later use in updateElement
+   */
+  setRenderCallbacks(callbacks) {
+    this._renderCallbacks = callbacks;
+  }
+
+  /**
    * Open configuration dialog
    * @returns {Promise} Resolves with updated config
    */
